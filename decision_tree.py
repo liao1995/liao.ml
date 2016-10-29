@@ -18,6 +18,7 @@ class Node:
     self.parent = None	# Parent of this node
     self.label = -1	# Class of this node, ONLY for leaf
     self.entropy = -1	# Entropy of data of this node
+    self.depth = -1	# Depth of this node in tree
 
   
   def isleaf(self):
@@ -47,16 +48,18 @@ class Tree:
       print(e)
       exit()
     self.n_classes = np.max(train_label) + 1
-    self.root = __build_tree(train_data_label, range(len(train_data.shape[1])))
+    self.__root = self.__build_tree(train_data_label, range(train_data.shape[1]))
+    print(self.__root)
 
 
-  def __build_tree(self, data, attr_ids, feature=None):
+  def __build_tree(self, data, attr_ids, depth=0,feature=None):
     """ Build decision tree recursively 
         Parameters:
         -----------
         node: current node need to generate its children
         data: examples with training data and label (last column)
         attrs: attributes set, included current attributes index
+        depth: Depth of current node in tree
         feature: feature value used for splitting the node
         ----------
         Return:
@@ -64,6 +67,7 @@ class Tree:
     """
     node = Node()
     node.feature = feature
+    node.depth = depth
     # All instances has same labels
     if np.sum(data[:,-1]==data[0][-1])==len(data[:,-1]):
       node.label = data[0][-1]
@@ -87,10 +91,11 @@ class Tree:
     node.fid = max_ig_aid	# split by this feature
     del attr_ids[max_ig_index]	# remove this attribute from attribute set
     all_attrs = get_value_counts(data[:, max_ig_aid])
+    node.nodes = list()
     for each_attr in all_attrs:	# select column max_ig_aid value is each_attr,
       child = self.__build_tree(# then delete this column, pass to child node
                np.delete(data[data[:,max_ig_aid]==each_attr,:], max_ig_aid, axis=1),
-               attr_ids, each_attr) 
+               attr_ids, depth=depth+1, feature=each_attr) 
       child.parent = node
       node.nodes.append(child)
     return node
@@ -102,7 +107,24 @@ class Tree:
     for i in range(n_classes):
       num_labels.append(np.sum(train_label == i))
     return np.argmax(num_labels)
- 
+
+  def print_tree(self):
+    """ Print the structure of this tree """
+    print ('--level 0--\ns.{0}'.format(self.__root.fid))
+    q = list()
+    level = 0
+    q.append(self.__root.nodes)
+    while len(q) != 0:
+      nodes = q[0]
+      del q[0]
+      for node in nodes:
+        if node.depth > level: 
+          print('--level {0}--'.format(node.depth))
+          level = node.depth
+        if node.isleaf(): print('leaf - by.{0}, c.{1}'.format(node.feature, node.label))
+        else: print('by.{0} s.{1}\t'.format(node.feature, node.fid))
+        if node.nodes != None: q.append(node.nodes)
+   
 
 def calc_entropy(vector):
   """ Calcualte the entropy on giving vector
@@ -140,7 +162,12 @@ def calc_info_gain(attrs, labels, p_entropy=None):
 
 
 if __name__ == '__main__':
-  attrs = np.array([2,2,1,1,2,2,2,1,2,2,2,2,1,1,2])
-  att = np.array([0,0,0,1,0,0,0,1,1,1,1,1,0,0,0])
-  labels = np.array([0,0,1,1,0,0,0,1,1,1,1,1,1,1,0])
-  print (calc_info_gain(att, labels))
+  train_data = np.array([[0,0,0,0,0,1,1,1,1,1,2,2,2,2,2],
+                         [0,0,1,1,0,0,0,1,0,0,0,0,1,1,0],
+                         [0,0,0,1,0,0,0,1,1,1,1,1,0,0,0],
+                         [0,1,1,0,0,0,1,1,2,2,2,1,1,2,0],
+                         ]).transpose()
+  train_label = np.array([0,0,1,1,0,0,0,1,1,1,1,1,1,1,0])
+  t = Tree()
+  t.fit(train_data, train_label)
+  t.print_tree()
