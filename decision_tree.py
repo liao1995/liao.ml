@@ -8,6 +8,7 @@
 
 import numpy as np 
 import math
+import csv
 
 class Node:
   """ Node of the decision tree """
@@ -31,19 +32,25 @@ class Tree:
     self.__root = None		# Root of decision tree
     self.n_classes = -1		# Number of classes for classifier
     self.epsilon = epsilon	# If gain less than this value, see as leaf
+    self.criterion = None	# Attribute Splitting criterion
     
-  def fit(self, train_data, train_label):
+  def fit(self, train_data, train_label, criterion='gini'):
     """ Fit this tree with train data and train label 
       Parameters:
       ----------
       train_data: training data, 2D array-like 
       train_label: training label, 1D array-like, for classifier,
                   class label must be value from 0 to n_classes-1 
+      criterion: attribute splitting criterion, default is 'gini'
+                 'gini': splitting by gini index of attribute
+                 'info gain': splitting by information gain of attribute
+                 'mis error': splitting by misclassification error
     """  
     train_data = np.array(train_data)
     train_label = np.array(train_label)
     train_data_label = np.column_stack((train_data, train_label))
     self.n_classes = np.max(train_label) + 1
+    self.criterion = criterion
     self.__root = self.__build_tree(train_data_label, range(train_data.shape[1]))
 
 
@@ -71,24 +78,37 @@ class Tree:
     if len(attr_ids) == 0: 
       node.label = __get_max_class(data[:,-1])
       return node
-    node.entropy = calc_entropy(data[:,-1])
-    # Calculate infomration gain
-    info_gains = list()
+    if self.criterion == 'info gain':
+      node.entropy = calc_entropy(data[:,-1])
+    # Calculate criterions
+    criterions = list()
     for aid in attr_ids:
-      info_gains.append(calc_info_gain(data[:,aid], data[:,-1], node.entropy)) 
+      if self.criterion == 'info gain':
+        criterions.append(
+                   calc_info_gain(data[:,aid], data[:,-1], node.entropy)) 
+      elif self.criterion == 'gini':
+        criterions.append(calc_gini_index(data[:,aid], data[:,-1]))
+      elif self.criterion == 'mis error':
+        criterions.append(calc_mis_error(data[:,aid], data[:,-1]))
     # Threshold
-    max_info_gains = max(info_gains)
-    if max_info_gains < self.epsilon:
+    if self.criterion == 'info gain':
+      max_criterions = max(criterions)	# maximalize information gain
+      if max_criterions < self.epsilon:
+        node.label = self.__get_max_class(data[:,-1])
+        return node
+    elif self.criterion == 'gini' or self.criterion == 'mis error':
+      max_criterions = min(criterions)	
+    max_index = criterions.index(max_criterions)
+    max_aid = attr_ids[max_index]
+    if np.sum(data[:,max_aid]==data[0][max_aid]) == len(data[:,max_aid]):
       node.label = self.__get_max_class(data[:,-1])
       return node
-    max_ig_index = info_gains.index(max_info_gains)
-    max_ig_aid = attr_ids[max_ig_index]
-    node.fid = max_ig_aid	# split by this feature
+    node.fid = max_aid		# split by this feature
     #del attr_ids[max_ig_index]	# remove this attribute from attribute set
-    all_attrs = get_value_counts(data[:, max_ig_aid])
+    all_attrs = get_value_counts(data[:, max_aid])
     node.nodes = list()
     for each_attr in all_attrs:	# select column max_ig_aid value is each_attr,
-      child = self.__build_tree(data[data[:,max_ig_aid]==each_attr,:],
+      child = self.__build_tree(data[data[:,max_aid]==each_attr,:],
                attr_ids, depth=depth+1, feature=each_attr) 
       child.parent = node
       node.nodes.append(child)
@@ -178,7 +198,46 @@ def calc_info_gain(attrs, labels, p_entropy=None):
   return info_gain 
 
 
-def evaluate(model, X,  y, method='cv', times=1000, verbose=False):
+def calc_gini(vector):
+  """ Calculate the gini on giving vector """
+  if np.sum(vector==vector[0])==len(vector): return 0.0
+  p = np.bincount(vector) / float(len(vector))
+  return 1.0 - sum(p ** 2)
+  
+
+def calc_gini_index(attrs, labels):
+  """ Calculate the Gini index of attributes attrs,
+      giving the label labels corresponding
+  """
+  m = get_value_counts(attrs)
+  N = len(attrs)
+  gini_index = 0.0
+  for attr in m:
+    gini_index += (m[attr] / float(N)) * calc_gini(labels[attrs==attr]) 
+  return gini_index
+
+
+def calc_mis(vector):
+  """ Calculate the classification error on giving vector """
+  if np.sum(vector==vector[0])==len(vector): return 0.0
+  p = np.bincount(vector) / float(len(vector))
+  return 1.0 - np.max(p)
+
+
+def calc_mis_error(attrs, labels):  
+  """ Calculate the misclassification error of attributes attrs,
+      giving the label labels corresponding
+  """
+  m = get_value_counts(attrs)
+  N = len(attrs)
+  mis_error = 0.0
+  for attr in m:
+    mis_error += (m[attr] / float(N)) * calc_mis(labels[attrs==attr]) 
+  return mis_error
+
+
+def evaluate(model, X,  y, method='cv', times=1000, 
+             criterion='gini', verbose=False):
   """ Evaluate giving model based on train data and train label
       Paramter:
       ---------
@@ -191,6 +250,10 @@ def evaluate(model, X,  y, method='cv', times=1000, verbose=False):
               'bootstrap': bootstrap method
       times: how many times evalution should do to calculate
              average accuracy for hold-out method
+      criterion: attribute splitting criterion, default is 'gini'
+                 'gini': splitting by gini index of attribute
+                 'info gain': splitting by information gain of attribute
+                 'mis error': splitting by misclassification error
       verbose: print solving process message or not
       ---------
       Return:
@@ -202,7 +265,8 @@ def evaluate(model, X,  y, method='cv', times=1000, verbose=False):
     sum_accuracy = 0.0
     for i in range(times):
       train_data_label, test_data_label = hold_out_split(X, y, y_counts) 
-      model.fit(train_data_label[:,:-1], train_data_label[:,-1])
+      model.fit(train_data_label[:,:-1], train_data_label[:,-1], 
+                criterion=criterion)
       accu = accuracy(test_data_label[:,-1], 
                       model.predict(test_data_label[:,:-1]))
       sum_accuracy += accu
@@ -221,7 +285,8 @@ def evaluate(model, X,  y, method='cv', times=1000, verbose=False):
         else: end = (j + 1) * test_size
         test_data_label = data_label[start:end,:]
         train_data_label = np.delete(data_label, range(start,end), axis=0)
-        model.fit(train_data_label[:,:-1], train_data_label[:,-1])
+        model.fit(train_data_label[:,:-1], train_data_label[:,-1], 
+                  criterion=criterion)
         accu = accuracy(test_data_label[:,-1], 
                         model.predict(test_data_label[:,:-1]))
         local_sum_accuracy += accu 
@@ -233,7 +298,8 @@ def evaluate(model, X,  y, method='cv', times=1000, verbose=False):
     sum_accuracy = 0.0
     for i in range(times):
       train_data_label, test_data_label = bootstrap_sampling(X, y)
-      model.fit(train_data_label[:,:-1], train_data_label[:,-1])
+      model.fit(train_data_label[:,:-1], train_data_label[:,-1],
+                criterion=criterion)
       sample_accu = accuracy(test_data_label[:,-1], 
                       model.predict(test_data_label[:,:-1]))
       total_accu = accuracy(data_label[:,-1],
@@ -242,6 +308,7 @@ def evaluate(model, X,  y, method='cv', times=1000, verbose=False):
       sum_accuracy += accu
       if verbose: print ('{0}\t{1}'.format(i, accu))
     return sum_accuracy / times 
+  raise ValueError('Unexcepted evaluate method: ', method)
 
 
 def hold_out_split(X, y, y_counts=None):
@@ -295,13 +362,32 @@ if __name__ == '__main__':
 #                         [0,1,1,0,0,0,1,1,2,2,2,1,1,2,0],
 #                         ]).transpose()
 #  train_label = np.array([0,0,1,1,0,0,0,1,1,1,1,1,1,1,0])
-  train_data = np.array([[0,1,1,0,1,0,2,1,2,0,0,2,1,1,2,2,0],
-                         [0,0,0,1,1,2,1,1,0,0,0,0,1,1,2,0,1],
-                         [0,1,0,0,0,2,1,0,0,1,1,0,0,1,2,0,0],
-                         [0,0,0,0,1,0,1,0,2,1,0,0,0,1,2,2,1],
-                         [0,0,0,1,1,2,0,1,2,1,0,0,1,1,2,2,0],
-                         [0,0,0,1,1,1,0,1,0,0,0,0,0,0,0,1,0],
-                        ]).transpose()
-  train_label = np.array([1,1,1,1,1,0,0,0,0,0,1,1,1,0,0,0,0])
-  t = Tree()
-  print(evaluate(t, train_data, train_label, 'bootstrap', verbose=True))
+#  train_data = np.array([[0,1,1,0,1,0,2,1,2,0,0,2,1,1,2,2,0],
+#                         [0,0,0,1,1,2,1,1,0,0,0,0,1,1,2,0,1],
+#                         [0,1,0,0,0,2,1,0,0,1,1,0,0,1,2,0,0],
+#                         [0,0,0,0,1,0,1,0,2,1,0,0,0,1,2,2,1],
+#                         [0,0,0,1,1,2,0,1,2,1,0,0,1,1,2,2,0],
+#                         [0,0,0,1,1,1,0,1,0,0,0,0,0,0,0,1,0],
+#                        ]).transpose()
+#  train_label = np.array([1,1,1,1,1,0,0,0,0,0,1,1,1,0,0,0,0])
+#  t = Tree()
+#  t.fit(train_data, train_label, criterion='mis error')
+#  t.print_tree()
+#  print(evaluate(t, train_data, train_label, 'bootstrap', verbose=True))
+   train_data_label = list()
+   with open('connect-4.data', 'rb') as f:
+     r = csv.reader(f)
+     for line in r: train_data_label.append(line)
+   train_data_label = np.array(train_data_label)
+   train_data_label[train_data_label=='x'] = 0
+   train_data_label[train_data_label=='o'] = 1
+   train_data_label[train_data_label=='b'] = 2
+   train_data_label[train_data_label=='win'] = 0
+   train_data_label[train_data_label=='loss'] = 1
+   train_data_label[train_data_label=='draw'] = 2
+   train_data_label = train_data_label.astype(int)
+   print (train_data_label)
+   print (train_data_label.shape)
+   t = Tree()
+   print(evaluate(t, train_data_label[:,:-1], train_data_label[:,-1], 
+         'bootstrap', criterion='mis error', verbose=True))
