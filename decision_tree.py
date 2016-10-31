@@ -7,6 +7,7 @@
 #============================================================================
 
 import numpy as np 
+from scipy.stats import chi2_contingency
 import math
 import csv
 
@@ -32,9 +33,11 @@ class Tree:
     self.__root = None		# Root of decision tree
     self.n_classes = -1		# Number of classes for classifier
     self.epsilon = epsilon	# If gain less than this value, see as leaf
+    self.prepruning = False	# Do pre-pruning or not
+    self.alpha = 0.05		# Alpha of chi-square test for pre-pruning
     self.criterion = None	# Attribute Splitting criterion
     
-  def fit(self, train_data, train_label, criterion='gini'):
+  def fit(self, train_data, train_label, criterion='gini', prepruning=False):
     """ Fit this tree with train data and train label 
       Parameters:
       ----------
@@ -45,12 +48,14 @@ class Tree:
                  'gini': splitting by gini index of attribute
                  'info gain': splitting by information gain of attribute
                  'mis error': splitting by misclassification error
+      prepruning: bool value, decide whether use pre-pruning method or not
     """  
     train_data = np.array(train_data)
     train_label = np.array(train_label)
     train_data_label = np.column_stack((train_data, train_label))
     self.n_classes = np.max(train_label) + 1
     self.criterion = criterion
+    self.prepruning = prepruning
     self.__root = self.__build_tree(train_data_label, range(train_data.shape[1]))
 
 
@@ -103,6 +108,10 @@ class Tree:
     if np.sum(data[:,max_aid]==data[0][max_aid]) == len(data[:,max_aid]):
       node.label = self.__get_max_class(data[:,-1])
       return node
+    # pre-pruning
+    if self.prepruning and self.__pre_pruning(data[:,max_aid], data[:,-1]):
+      node.label = self.__get_max_class(data[:,-1])
+      return node
     node.fid = max_aid		# split by this feature
     #del attr_ids[max_ig_index]	# remove this attribute from attribute set
     all_attrs = get_value_counts(data[:, max_aid])
@@ -135,6 +144,17 @@ class Tree:
       labels.append(node.label)
     return np.array(labels)      
 
+  
+  def __pre_pruning(self, attrs, labels): 
+    """ Do pre-pruning based on chi-square test """
+    observe = list()
+    m = get_value_counts(attrs)
+    for attr in m:
+      observe.append(np.bincount(labels[attrs==attr], minlength=self.n_classes))   
+    chi2, p, dof, ex = chi2_contingency(np.array(observe))
+    if p < self.alpha: return False
+    else: return True
+ 
 
   def __get_max_class(self, train_label):
     """ Get the maximum number of class label """
@@ -237,7 +257,7 @@ def calc_mis_error(attrs, labels):
 
 
 def evaluate(model, X,  y, method='cv', times=1000, 
-             criterion='gini', verbose=False):
+             criterion='gini', prepruning=False, verbose=False):
   """ Evaluate giving model based on train data and train label
       Paramter:
       ---------
@@ -254,6 +274,7 @@ def evaluate(model, X,  y, method='cv', times=1000,
                  'gini': splitting by gini index of attribute
                  'info gain': splitting by information gain of attribute
                  'mis error': splitting by misclassification error
+      prepruning: bool value, decide whether use pre-pruning method or not
       verbose: print solving process message or not
       ---------
       Return:
@@ -266,7 +287,7 @@ def evaluate(model, X,  y, method='cv', times=1000,
     for i in range(times):
       train_data_label, test_data_label = hold_out_split(X, y, y_counts) 
       model.fit(train_data_label[:,:-1], train_data_label[:,-1], 
-                criterion=criterion)
+                criterion=criterion, prepruning=prepruning)
       accu = accuracy(test_data_label[:,-1], 
                       model.predict(test_data_label[:,:-1]))
       sum_accuracy += accu
@@ -286,7 +307,7 @@ def evaluate(model, X,  y, method='cv', times=1000,
         test_data_label = data_label[start:end,:]
         train_data_label = np.delete(data_label, range(start,end), axis=0)
         model.fit(train_data_label[:,:-1], train_data_label[:,-1], 
-                  criterion=criterion)
+                  criterion=criterion, prepruning=prepruning)
         accu = accuracy(test_data_label[:,-1], 
                         model.predict(test_data_label[:,:-1]))
         local_sum_accuracy += accu 
@@ -299,7 +320,7 @@ def evaluate(model, X,  y, method='cv', times=1000,
     for i in range(times):
       train_data_label, test_data_label = bootstrap_sampling(X, y)
       model.fit(train_data_label[:,:-1], train_data_label[:,-1],
-                criterion=criterion)
+                criterion=criterion, prepruning=prepruning)
       sample_accu = accuracy(test_data_label[:,-1], 
                       model.predict(test_data_label[:,:-1]))
       total_accu = accuracy(data_label[:,-1],
@@ -362,32 +383,33 @@ if __name__ == '__main__':
 #                         [0,1,1,0,0,0,1,1,2,2,2,1,1,2,0],
 #                         ]).transpose()
 #  train_label = np.array([0,0,1,1,0,0,0,1,1,1,1,1,1,1,0])
-#  train_data = np.array([[0,1,1,0,1,0,2,1,2,0,0,2,1,1,2,2,0],
-#                         [0,0,0,1,1,2,1,1,0,0,0,0,1,1,2,0,1],
-#                         [0,1,0,0,0,2,1,0,0,1,1,0,0,1,2,0,0],
-#                         [0,0,0,0,1,0,1,0,2,1,0,0,0,1,2,2,1],
-#                         [0,0,0,1,1,2,0,1,2,1,0,0,1,1,2,2,0],
-#                         [0,0,0,1,1,1,0,1,0,0,0,0,0,0,0,1,0],
-#                        ]).transpose()
-#  train_label = np.array([1,1,1,1,1,0,0,0,0,0,1,1,1,0,0,0,0])
-#  t = Tree()
-#  t.fit(train_data, train_label, criterion='mis error')
+  train_data = np.array([[0,1,1,0,1,0,2,1,2,0,0,2,1,1,2,2,0],
+                         [0,0,0,1,1,2,1,1,0,0,0,0,1,1,2,0,1],
+                         [0,1,0,0,0,2,1,0,0,1,1,0,0,1,2,0,0],
+                         [0,0,0,0,1,0,1,0,2,1,0,0,0,1,2,2,1],
+                         [0,0,0,1,1,2,0,1,2,1,0,0,1,1,2,2,0],
+                         [0,0,0,1,1,1,0,1,0,0,0,0,0,0,0,1,0],
+                        ]).transpose()
+  train_label = np.array([1,1,1,1,1,0,0,0,0,0,1,1,1,0,0,0,0])
+  t = Tree()
+#  t.fit(train_data, train_label, criterion='gini', prepruning=True)
 #  t.print_tree()
-#  print(evaluate(t, train_data, train_label, 'bootstrap', verbose=True))
-   train_data_label = list()
-   with open('connect-4.data', 'rb') as f:
-     r = csv.reader(f)
-     for line in r: train_data_label.append(line)
-   train_data_label = np.array(train_data_label)
-   train_data_label[train_data_label=='x'] = 0
-   train_data_label[train_data_label=='o'] = 1
-   train_data_label[train_data_label=='b'] = 2
-   train_data_label[train_data_label=='win'] = 0
-   train_data_label[train_data_label=='loss'] = 1
-   train_data_label[train_data_label=='draw'] = 2
-   train_data_label = train_data_label.astype(int)
-   print (train_data_label)
-   print (train_data_label.shape)
-   t = Tree()
-   print(evaluate(t, train_data_label[:,:-1], train_data_label[:,-1], 
-         'bootstrap', criterion='mis error', verbose=True))
+  print(evaluate(t, train_data, train_label, 'bootstrap', prepruning=True, verbose=True))
+#   train_data_label = list()
+#   with open('connect-4.data', 'rb') as f:
+#     r = csv.reader(f)
+#     for line in r: train_data_label.append(line)
+#   train_data_label = np.array(train_data_label)
+#   train_data_label[train_data_label=='x'] = 0
+#   train_data_label[train_data_label=='o'] = 1
+#   train_data_label[train_data_label=='b'] = 2
+#   train_data_label[train_data_label=='win'] = 0
+#   train_data_label[train_data_label=='loss'] = 1
+#   train_data_label[train_data_label=='draw'] = 2
+#   train_data_label = train_data_label.astype(int)
+#   print (train_data_label)
+#   print (train_data_label.shape)
+#   t = Tree()
+#   t.fit(train_data_label[:,:-1], train_data_label[:,:-1], prepruning=True)
+#   print(evaluate(t, train_data_label[:,:-1], train_data_label[:,-1], 
+#         'bootstrap', criterion='mis error', verbose=True))
