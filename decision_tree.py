@@ -19,7 +19,7 @@ class Node:
     self.nodes = None	# Children of this node 
     self.parent = None	# Parent of this node
     self.label = -1	# Class of this node, ONLY for leaf
-    self.entropy = -1	# Entropy of data of this node
+    self.entropy = None	# Entropy of data of this node
     self.depth = -1	# Depth of this node in tree
     self.ex_cts = None	# List: counts of each label examples
 
@@ -38,9 +38,11 @@ class Tree:
     self.postpruning = False	# Do post-pruning or not
     self.alpha = 0.05		# Alpha of chi-square test for pre-pruning
     self.criterion = None	# Attribute Splitting criterion
+    self.missing = None		# Missing value
+
     
   def fit(self, train_data, train_label, criterion='gini', prepruning=False,
-          postpruning=False):
+          postpruning=False, missing=None):
     """ Fit this tree with train data and train label 
       Parameters:
       ----------
@@ -53,6 +55,8 @@ class Tree:
                  'mis error': splitting by misclassification error
       prepruning: bool value, decide whether use pre-pruning method or not
       postpruning: bool value, decide whether use post-pruning method or not
+      missing: missing value, algorithm will see attribute hold this 
+               value as missing value
     """  
     train_data = np.array(train_data)
     train_label = np.array(train_label)
@@ -61,11 +65,15 @@ class Tree:
     self.criterion = criterion
     self.prepruning = prepruning
     self.postpruning = postpruning
-    self.__root = self.__build_tree(train_data_label, range(train_data.shape[1]))
+    self.missing = missing
+    w = [1.0] * train_data_label.shape[0]	# weight of samples
+    self.__root = self.__build_tree(train_data_label, 
+                  range(train_data.shape[1]), w = w)
     if postpruning: self.__post_pruning()
 
 
-  def __build_tree(self, data, attr_ids, depth=0,feature=None):
+  def __build_tree(self, data, attr_ids, depth=0, feature=None,
+                   w=None):
     """ Build decision tree recursively 
         Parameters:
         -----------
@@ -74,6 +82,7 @@ class Tree:
         attrs: attributes set, included current attributes index
         depth: Depth of current node in tree
         feature: feature value used for splitting the node
+        w: weight of samples, will used for missing value case
         ----------
         Return:
         Constructed node
@@ -91,7 +100,7 @@ class Tree:
     if len(attr_ids) == 0: 
       node.label = __get_max_class(data[:,-1])
       return node
-    if self.criterion == 'info gain':
+    if self.criterion == 'info gain' and self.missing==None:
       node.entropy = calc_entropy(data[:,-1])
     # Calculate criterions
     criterions = list()
@@ -226,16 +235,23 @@ class Tree:
         if node.nodes != None: q.append(node.nodes)
    
 
-def calc_entropy(vector):
+def calc_entropy(vector, w=None):
   """ Calcualte the entropy on giving vector
-      Noting: vector value from 0 to n_classes-1,
-              just like training labels  
+      if a non-None value has been assigned to w, then 
+      weighted entropy will be calculated.
   """
   if np.sum(vector==vector[0])==len(vector): return 0.0
-  p = np.bincount(vector) / float(len(vector))
+  if w != None and len(w) != len(vector):
+    raise ValueError('Length must be identical')
+  n_samples = len(vector) 
+  m = get_value_counts(vector)
   entropy = 0.0
-  for pi in p: 
-    if pi != 0.0: entropy -= pi * math.log(pi, 2)  
+  if w != None: sum_weigts = sum(w) 
+  for ci in m:
+    if w == None: pi = float(m[ci]) / n_samples
+    else:
+      pi = float(sum(w[vector==ci])) / sum_weigts 
+    entropy -= pi * math.log(pi, 2)
   return entropy
 
 
@@ -248,11 +264,29 @@ def get_value_counts(vector):
   return m
 
 
-def calc_info_gain(attrs, labels, p_entropy=None):
+def calc_info_gain(attrs, labels, p_entropy=None, 
+                   missing=None, w=None):
   """ Calculate the information gain of attributes
       attrs, giving the label labels corresponding 
       If giving paramter p_entropy , will using this
       parent entropy instead of calculating it. """
+  if missing != None: 
+    lines_no_missing = (attrs != missing)
+    attrs_no_missing = attrs[lines_no_missing]
+    labels_no_missing = labels[lines_no_missing]
+    w_no_missing = w[lines_no_missing]
+    p_entropy = calc_entropy(labels_no_missing, w_no_missing)
+    info_gain = p_entropy
+    m_attrs = get_value_counts(attrs_no_missing)
+    sum_weights_no_missing = sum(w_no_missing)
+    for a in m_attrs:
+      ent_a = calc_entropy(labels_no_missing[attrs_no_missing==a], 
+                           w_no_missing[attrs_no_missing==a])
+      r = sum(w_no_missing[attrs_no_missing==a])/sum_weights_no_missing
+      info_gain -= r * ent_a 
+    rho = sum_weights_no_missing / float(sum(w))
+    return rho * info_gain  
+  # no missing values
   if p_entropy == None: p_entropy = calc_entropy(labels)
   info_gain = p_entropy
   m = get_value_counts(attrs)
@@ -301,7 +335,8 @@ def calc_mis_error(attrs, labels):
 
 
 def evaluate(model, X,  y, method='cv', times=1000, criterion='gini', 
-             prepruning=False, postpruning=False, verbose=False):
+             prepruning=False, postpruning=False, 
+             missing=None, verbose=False):
   """ Evaluate giving model based on train data and train label
       Paramter:
       ---------
@@ -320,6 +355,8 @@ def evaluate(model, X,  y, method='cv', times=1000, criterion='gini',
                  'mis error': splitting by misclassification error
       prepruning: bool value, decide whether use pre-pruning method or not
       postpruning: bool value, decide whether use post-pruning method or not
+      missing: missing value, algorithm will see attribute hold this 
+               value as missing value
       verbose: print solving process message or not
       ---------
       Return:
@@ -333,7 +370,7 @@ def evaluate(model, X,  y, method='cv', times=1000, criterion='gini',
       train_data_label, test_data_label = hold_out_split(X, y, y_counts) 
       model.fit(train_data_label[:,:-1], train_data_label[:,-1], 
                 criterion=criterion, prepruning=prepruning, 
-                postpruning=postpruning)
+                postpruning=postpruning,missing=missing)
       accu = accuracy(test_data_label[:,-1], 
                       model.predict(test_data_label[:,:-1]))
       sum_accuracy += accu
@@ -354,7 +391,7 @@ def evaluate(model, X,  y, method='cv', times=1000, criterion='gini',
         train_data_label = np.delete(data_label, range(start,end), axis=0)
         model.fit(train_data_label[:,:-1], train_data_label[:,-1], 
                   criterion=criterion, prepruning=prepruning, 
-                  postpruning=postpruning)
+                  postpruning=postpruning, missing=missing)
         accu = accuracy(test_data_label[:,-1], 
                         model.predict(test_data_label[:,:-1]))
         local_sum_accuracy += accu 
@@ -368,7 +405,7 @@ def evaluate(model, X,  y, method='cv', times=1000, criterion='gini',
       train_data_label, test_data_label = bootstrap_sampling(X, y)
       model.fit(train_data_label[:,:-1], train_data_label[:,-1],
                 criterion=criterion, prepruning=prepruning,
-                postpruning=postpruning)
+                postpruning=postpruning, missing=missing)
       sample_accu = accuracy(test_data_label[:,-1], 
                       model.predict(test_data_label[:,:-1]))
       total_accu = accuracy(data_label[:,-1],
@@ -424,42 +461,28 @@ def accuracy(y, pred_y):
   return float(sum(pred_y==y))/len(y)
 
 
-def rand_missing(data, fraction=0):
+def rand_missing(data, fraction=0, missing=-99999):
   """ Random generate the dataset that have missing fraction * N 
       (number of elements of original dataset values), return 
       the new missing dataset, default return the copy of original 
       dataset  
-      Note: this method generate approximately NOT exactly N * f
-            missig values, the probability of generating exact N 
-            * f missing values will increase with number elements
-            of original dataset, exactly, 
-
-              (row*col)(row*col-1)(row*col-2)...(row*col-N*f+1)
-             --------------------------------------------------- 
-                              (row*col)^(N*f)
-
-            where row and col is the row and column of original 
-            dataset in two-dimension case, for example, if data 
-            owns the shape: 10000 * 10, we select fraction 0.001, 
-            that is to say, we need to generate 100 missing values,
-            we will have:
-        
-             (10000*10)(10000*10-1)(10000*10-2)...(10000*10-99)
-            ----------------------------------------------------
-                               (10000*10)^100
-             
-            ~= 0.95168 probability to generate N * f missing
-            values.
       Parameter:
       -----------
       data: original dataset, array-like
       fraction: float value from 0 to 1, indicate the probability 
-                to select element set to missing value 
+                to select element set to missing value
+      missing: what value should be filled as missing value 
   """
-  count_missing = fraction * data.size
-  row, col = data.shape
-  data[np.random.randint(row, size=count_missing), 
-       np.random.randint(col, size=count_missing)] = float('nan')
+  data_cp = data.copy()
+  count_missing = fraction * data_cp.size
+  row, col = data_cp.shape
+  s = set()	# for generating N * f different couples
+  while (len(s)) < count_missing:
+    i = np.random.randint(row)
+    j = np.random.randint(col)
+    data_cp[i][j] = missing
+    s.add((i,j))# added actually when (i,j) not in set
+  return data_cp
 
 
 if __name__ == '__main__':
@@ -477,28 +500,34 @@ if __name__ == '__main__':
 #                         [0,0,0,1,1,1,0,1,0,0,0,0,0,0,0,1,0],
 #                        ]).transpose()
 #  train_label = np.array([1,1,1,1,1,0,0,0,0,0,1,1,1,0,0,0,0])
-#  t = Tree()
+#  t = Tree()                               
+#  train_data = rand_missing(train_data, missing=-1,fraction=0.1)
 #  t.fit(train_data, train_label, criterion='gini', prepruning=True)
-#  t.print_tree()
-#  print(evaluate(t, train_data, train_label, 'bootstrap', postpruning=True, verbose=True))
-#   train_data_label = list()
-#   with open('connect-4.data', 'rb') as f:
-#     r = csv.reader(f)
-#     for line in r: train_data_label.append(line)
-#   train_data_label = np.array(train_data_label)
-#   train_data_label[train_data_label=='x'] = 0
-#   train_data_label[train_data_label=='o'] = 1
-#   train_data_label[train_data_label=='b'] = 2
-#   train_data_label[train_data_label=='win'] = 0
-#   train_data_label[train_data_label=='loss'] = 1
-#   train_data_label[train_data_label=='draw'] = 2
-#   train_data_label = train_data_label.astype(int)
-#   print (train_data_label)
-#   print (train_data_label.shape)
-#   t = Tree()
-##   t.fit(train_data_label[:,:-1], train_data_label[:,:-1], prepruning=True)
-#   print(evaluate(t, train_data_label[:,:-1], train_data_label[:,-1], 
-#         'bootstrap', postpruning=True, criterion='mis error', verbose=True))
+#  t.print_tree()                           
+#  print(evaluate(t, train_data, train_label, 'bootstrap',
+#                 criterion='info gain', missing=-1, verbose=True))
+   train_data_label = list()               
+   with open('connect-4.data', 'rb') as f:
+     r = csv.reader(f)
+     for line in r: train_data_label.append(line)
+   train_data_label = np.array(train_data_label)
+   train_data_label[train_data_label=='x'] = 0
+   train_data_label[train_data_label=='o'] = 1
+   train_data_label[train_data_label=='b'] = 2
+   train_data_label[train_data_label=='win'] = 0
+   train_data_label[train_data_label=='loss'] = 1
+   train_data_label[train_data_label=='draw'] = 2
+   train_data_label = train_data_label.astype(int)
+   print (train_data_label)
+   print (train_data_label.shape)
+   t = Tree()
+#   t.fit(train_data_label[:,:-1], train_data_label[:,:-1], prepruning=True)
+   train_data = train_data_label[:,:-1]
+   train_data = rand_missing(train_data, missing=-1, fraction=0.01)
+   print (train_data)
+   train_label = train_data_label[:,-1]
+   print(evaluate(t, train_data, train_label, missing=-1,method='bootstrap', 
+         postpruning=True, criterion='info gain', verbose=True))
 #  train_data = np.array([[1,2,3,4,5,6,7,8,9],[1,1,1,0,0,0,0,1,0],[1,1,0,0,1,1,0,0,1]]).transpose()
 #  train_label = np.array([1,1,0,1,0,0,0,1,0])
 #  print (calc_info_gain(train_data[:,2],train_label))
