@@ -424,6 +424,44 @@ def accuracy(y, pred_y):
   return float(sum(pred_y==y))/len(y)
 
 
+def rand_missing(data, fraction=0):
+  """ Random generate the dataset that have missing fraction * N 
+      (number of elements of original dataset values), return 
+      the new missing dataset, default return the copy of original 
+      dataset  
+      Note: this method generate approximately NOT exactly N * f
+            missig values, the probability of generating exact N 
+            * f missing values will increase with number elements
+            of original dataset, exactly, 
+
+              (row*col)(row*col-1)(row*col-2)...(row*col-N*f+1)
+             --------------------------------------------------- 
+                              (row*col)^(N*f)
+
+            where row and col is the row and column of original 
+            dataset in two-dimension case, for example, if data 
+            owns the shape: 10000 * 10, we select fraction 0.001, 
+            that is to say, we need to generate 100 missing values,
+            we will have:
+        
+             (10000*10)(10000*10-1)(10000*10-2)...(10000*10-99)
+            ----------------------------------------------------
+                               (10000*10)^100
+             
+            ~= 0.95168 probability to generate N * f missing
+            values.
+      Parameter:
+      -----------
+      data: original dataset, array-like
+      fraction: float value from 0 to 1, indicate the probability 
+                to select element set to missing value 
+  """
+  count_missing = fraction * data.size
+  row, col = data.shape
+  data[np.random.randint(row, size=count_missing), 
+       np.random.randint(col, size=count_missing)] = float('nan')
+
+
 if __name__ == '__main__':
 #  train_data = np.array([[0,0,0,0,0,1,1,1,1,1,2,2,2,2,2],
 #                         [0,0,1,1,0,0,0,1,0,0,0,0,1,1,0],
@@ -443,21 +481,24 @@ if __name__ == '__main__':
 #  t.fit(train_data, train_label, criterion='gini', prepruning=True)
 #  t.print_tree()
 #  print(evaluate(t, train_data, train_label, 'bootstrap', postpruning=True, verbose=True))
-   train_data_label = list()
-   with open('connect-4.data', 'rb') as f:
-     r = csv.reader(f)
-     for line in r: train_data_label.append(line)
-   train_data_label = np.array(train_data_label)
-   train_data_label[train_data_label=='x'] = 0
-   train_data_label[train_data_label=='o'] = 1
-   train_data_label[train_data_label=='b'] = 2
-   train_data_label[train_data_label=='win'] = 0
-   train_data_label[train_data_label=='loss'] = 1
-   train_data_label[train_data_label=='draw'] = 2
-   train_data_label = train_data_label.astype(int)
-   print (train_data_label)
-   print (train_data_label.shape)
-   t = Tree()
-#   t.fit(train_data_label[:,:-1], train_data_label[:,:-1], prepruning=True)
-   print(evaluate(t, train_data_label[:,:-1], train_data_label[:,-1], 
-         'bootstrap', postpruning=True, criterion='mis error', verbose=True))
+#   train_data_label = list()
+#   with open('connect-4.data', 'rb') as f:
+#     r = csv.reader(f)
+#     for line in r: train_data_label.append(line)
+#   train_data_label = np.array(train_data_label)
+#   train_data_label[train_data_label=='x'] = 0
+#   train_data_label[train_data_label=='o'] = 1
+#   train_data_label[train_data_label=='b'] = 2
+#   train_data_label[train_data_label=='win'] = 0
+#   train_data_label[train_data_label=='loss'] = 1
+#   train_data_label[train_data_label=='draw'] = 2
+#   train_data_label = train_data_label.astype(int)
+#   print (train_data_label)
+#   print (train_data_label.shape)
+#   t = Tree()
+##   t.fit(train_data_label[:,:-1], train_data_label[:,:-1], prepruning=True)
+#   print(evaluate(t, train_data_label[:,:-1], train_data_label[:,-1], 
+#         'bootstrap', postpruning=True, criterion='mis error', verbose=True))
+#  train_data = np.array([[1,2,3,4,5,6,7,8,9],[1,1,1,0,0,0,0,1,0],[1,1,0,0,1,1,0,0,1]]).transpose()
+#  train_label = np.array([1,1,0,1,0,0,0,1,0])
+#  print (calc_info_gain(train_data[:,2],train_label))
