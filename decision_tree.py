@@ -30,25 +30,10 @@ class Node:
 
 class Tree:
   """ Decision Tree class """
-  def __init__(self, epsilon=1e-5):
-    self.__root = None		# Root of decision tree
-    self.n_classes = -1		# Number of classes for classifier
-    self.epsilon = epsilon	# If gain less than this value, see as leaf
-    self.prepruning = False	# Do pre-pruning or not
-    self.postpruning = False	# Do post-pruning or not
-    self.alpha = 0.05		# Alpha of chi-square test for pre-pruning
-    self.criterion = None	# Attribute Splitting criterion
-    self.missing = None		# Missing value
-
-    
-  def fit(self, train_data, train_label, criterion='gini', prepruning=False,
-          postpruning=False, missing=None):
-    """ Fit this tree with train data and train label 
-      Parameters:
-      ----------
-      train_data: training data, 2D array-like 
-      train_label: training label, 1D array-like, for classifier,
-                  class label must be value from 0 to n_classes-1 
+  def __init__(self, epsilon=1e-5, prepruning=False, postpruning=False,
+                     missing=None, criterion='gini'):
+    """ 
+      epsilon: if gain less than this value, see as leaf
       criterion: attribute splitting criterion, default is 'gini'
                  'gini': splitting by gini index of attribute
                  'info gain': splitting by information gain of attribute
@@ -57,19 +42,33 @@ class Tree:
       postpruning: bool value, decide whether use post-pruning method or not
       missing: missing value, algorithm will see attribute hold this 
                value as missing value
+    """ 
+    self.__root = None		# Root of decision tree
+    self.n_classes = -1		# Number of classes for classifier
+    self.epsilon = epsilon
+    self.prepruning = prepruning
+    self.postpruning = postpruning
+    self.alpha = 0.05		# Alpha of chi-square test for pre-pruning
+    self.criterion = criterion	# Attribute Splitting criterion
+    self.missing = missing	# Missing value
+
+    
+  def fit(self, train_data, train_label):
+    """ Fit this tree with train data and train label 
+      Parameters:
+      ----------
+      train_data: training data, 2D array-like 
+      train_label: training label, 1D array-like, for classifier,
+                  class label must be value from 0 to n_classes-1 
     """  
     train_data = np.array(train_data)
     train_label = np.array(train_label)
     train_data_label = np.column_stack((train_data, train_label))
     self.n_classes = np.max(train_label) + 1
-    self.criterion = criterion
-    self.prepruning = prepruning
-    self.postpruning = postpruning
-    self.missing = missing
-    w = [1.0] * train_data_label.shape[0]	# weight of samples
+    w = np.ones(train_data.shape[0])
     self.__root = self.__build_tree(train_data_label, 
                   range(train_data.shape[1]), w = w)
-    if postpruning: self.__post_pruning()
+    if self.postpruning: self.__post_pruning()
 
 
   def __build_tree(self, data, attr_ids, depth=0, feature=None,
@@ -90,7 +89,7 @@ class Tree:
     node = Node()
     node.feature = feature
     node.depth = depth
-    if self.postpruning: 	# get counts of each label value 
+    if self.postpruning: 	# get counts of each label value
       node.ex_cts=np.bincount(data[:,-1],minlength=self.n_classes)
     # All instances has same labels
     if np.sum(data[:,-1]==data[0][-1])==len(data[:,-1]):
@@ -104,15 +103,24 @@ class Tree:
       node.entropy = calc_entropy(data[:,-1])
     # Calculate criterions
     criterions = list()
+    r_lists = list()
     for aid in attr_ids:
       if self.criterion == 'info gain':
-        criterions.append(
-                   calc_info_gain(data[:,aid], data[:,-1], node.entropy)) 
+        if self.missing != None:
+          if sum(data[:,aid]==self.missing)==len(data):
+            continue
+        info_gain, r = calc_info_gain(data[:,aid], data[:,-1],
+                     node.entropy, missing=self.missing, w=w)
+        criterions.append(info_gain) 
+        r_lists.append(r)
       elif self.criterion == 'gini':
         criterions.append(calc_gini_index(data[:,aid], data[:,-1]))
       elif self.criterion == 'mis error':
         criterions.append(calc_mis_error(data[:,aid], data[:,-1]))
     # Threshold
+    if len(criterions) < 1: 
+      node.label = self.__get_max_class(data[:,-1])
+      return node
     if self.criterion == 'info gain':
       max_criterions = max(criterions)	# maximalize information gain
       if max_criterions < self.epsilon:
@@ -121,6 +129,7 @@ class Tree:
     elif self.criterion == 'gini' or self.criterion == 'mis error':
       max_criterions = min(criterions)	
     max_index = criterions.index(max_criterions)
+    max_r = r_lists[max_index]
     max_aid = attr_ids[max_index]
     if np.sum(data[:,max_aid]==data[0][max_aid]) == len(data[:,max_aid]):
       node.label = self.__get_max_class(data[:,-1])
@@ -134,8 +143,24 @@ class Tree:
     all_attrs = get_value_counts(data[:, max_aid])
     node.nodes = list()
     for each_attr in all_attrs:	# select column max_ig_aid value is each_attr,
-      child = self.__build_tree(data[data[:,max_aid]==each_attr,:],
-               attr_ids, depth=depth+1, feature=each_attr) 
+      if self.missing != None:
+        if each_attr == self.missing: continue
+        new_data = list()
+        new_w = list()
+        for i in range(len(data)):
+          if data[i][max_aid] == each_attr:
+            new_data.append(data[i])
+            new_w.append(w[i])
+          elif data[i][max_aid] == self.missing:
+            new_data.append(data[i])
+            new_w.append(w[i]*float(max_r[each_attr]))
+        new_data = np.array(new_data)
+        new_w = np.array(new_w)
+        child = self.__build_tree(new_data, attr_ids, depth=depth+1,
+                                  feature=each_attr,w=new_w)
+      else:
+        child = self.__build_tree(data[data[:,max_aid]==each_attr,:],
+                 attr_ids, depth=depth+1, feature=each_attr)
       child.parent = node
       node.nodes.append(child)
     return node
@@ -279,13 +304,15 @@ def calc_info_gain(attrs, labels, p_entropy=None,
     info_gain = p_entropy
     m_attrs = get_value_counts(attrs_no_missing)
     sum_weights_no_missing = sum(w_no_missing)
+    rm = dict()
     for a in m_attrs:
       ent_a = calc_entropy(labels_no_missing[attrs_no_missing==a], 
                            w_no_missing[attrs_no_missing==a])
       r = sum(w_no_missing[attrs_no_missing==a])/sum_weights_no_missing
+      rm[a] = r
       info_gain -= r * ent_a 
     rho = sum_weights_no_missing / float(sum(w))
-    return rho * info_gain  
+    return rho * info_gain, rm 
   # no missing values
   if p_entropy == None: p_entropy = calc_entropy(labels)
   info_gain = p_entropy
@@ -293,7 +320,7 @@ def calc_info_gain(attrs, labels, p_entropy=None,
   N = len(attrs)
   for attr in m:
     info_gain -= m[attr] / float(N) * calc_entropy(labels[attrs==attr]) 
-  return info_gain 
+  return info_gain, None 
 
 
 def calc_gini(vector):
@@ -334,9 +361,7 @@ def calc_mis_error(attrs, labels):
   return mis_error
 
 
-def evaluate(model, X,  y, method='cv', times=1000, criterion='gini', 
-             prepruning=False, postpruning=False, 
-             missing=None, verbose=False):
+def evaluate(model, X,  y, method='cv', times=1000, verbose=False):
   """ Evaluate giving model based on train data and train label
       Paramter:
       ---------
@@ -349,14 +374,6 @@ def evaluate(model, X,  y, method='cv', times=1000, criterion='gini',
               'bootstrap': bootstrap method
       times: how many times evalution should do to calculate
              average accuracy for hold-out method
-      criterion: attribute splitting criterion, default is 'gini'
-                 'gini': splitting by gini index of attribute
-                 'info gain': splitting by information gain of attribute
-                 'mis error': splitting by misclassification error
-      prepruning: bool value, decide whether use pre-pruning method or not
-      postpruning: bool value, decide whether use post-pruning method or not
-      missing: missing value, algorithm will see attribute hold this 
-               value as missing value
       verbose: print solving process message or not
       ---------
       Return:
@@ -368,9 +385,7 @@ def evaluate(model, X,  y, method='cv', times=1000, criterion='gini',
     sum_accuracy = 0.0
     for i in range(times):
       train_data_label, test_data_label = hold_out_split(X, y, y_counts) 
-      model.fit(train_data_label[:,:-1], train_data_label[:,-1], 
-                criterion=criterion, prepruning=prepruning, 
-                postpruning=postpruning,missing=missing)
+      model.fit(train_data_label[:,:-1], train_data_label[:,-1])
       accu = accuracy(test_data_label[:,-1], 
                       model.predict(test_data_label[:,:-1]))
       sum_accuracy += accu
@@ -389,9 +404,7 @@ def evaluate(model, X,  y, method='cv', times=1000, criterion='gini',
         else: end = (j + 1) * test_size
         test_data_label = data_label[start:end,:]
         train_data_label = np.delete(data_label, range(start,end), axis=0)
-        model.fit(train_data_label[:,:-1], train_data_label[:,-1], 
-                  criterion=criterion, prepruning=prepruning, 
-                  postpruning=postpruning, missing=missing)
+        model.fit(train_data_label[:,:-1], train_data_label[:,-1])
         accu = accuracy(test_data_label[:,-1], 
                         model.predict(test_data_label[:,:-1]))
         local_sum_accuracy += accu 
@@ -403,9 +416,7 @@ def evaluate(model, X,  y, method='cv', times=1000, criterion='gini',
     sum_accuracy = 0.0
     for i in range(times):
       train_data_label, test_data_label = bootstrap_sampling(X, y)
-      model.fit(train_data_label[:,:-1], train_data_label[:,-1],
-                criterion=criterion, prepruning=prepruning,
-                postpruning=postpruning, missing=missing)
+      model.fit(train_data_label[:,:-1], train_data_label[:,-1])
       sample_accu = accuracy(test_data_label[:,-1], 
                       model.predict(test_data_label[:,:-1]))
       total_accu = accuracy(data_label[:,-1],
@@ -520,14 +531,15 @@ if __name__ == '__main__':
    train_data_label = train_data_label.astype(int)
    print (train_data_label)
    print (train_data_label.shape)
-   t = Tree()
+   t = Tree(postpruning=True, criterion='info gain',
+             missing=None)
 #   t.fit(train_data_label[:,:-1], train_data_label[:,:-1], prepruning=True)
    train_data = train_data_label[:,:-1]
    train_data = rand_missing(train_data, missing=-1, fraction=0.01)
    print (train_data)
    train_label = train_data_label[:,-1]
-   print(evaluate(t, train_data, train_label, missing=-1,method='bootstrap', 
-         postpruning=True, criterion='info gain', verbose=True))
+   print(evaluate(t, train_data, train_label, 
+              method='bootstrap', verbose=True))
 #  train_data = np.array([[1,2,3,4,5,6,7,8,9],[1,1,1,0,0,0,0,1,0],[1,1,0,0,1,1,0,0,1]]).transpose()
 #  train_label = np.array([1,1,0,1,0,0,0,1,0])
 #  print (calc_info_gain(train_data[:,2],train_label))
