@@ -255,10 +255,90 @@ class Tree:
         if node.depth > level: 
           print('--level {0}--'.format(node.depth))
           level = node.depth
-        if node.isleaf(): print('leaf - by.{0}, c.{1}'.format(node.feature, node.label))
+        if node.isleaf(): 
+          print('leaf - by.{0}, c.{1}'.format(node.feature, node.label))
         else: print('by.{0} s.{1}\t'.format(node.feature, node.fid))
         if node.nodes != None: q.append(node.nodes)
    
+
+class AdaBoost:
+  """ AdaBoost class """
+  def __init__(self,  n_estimators=10, prepruning=False, 
+               postpruning=False, missing=None, criterion='gini',
+               verbose=False):
+    """ 
+      n_estimators: number of base estimators (decision tree)
+      criterion: attribute splitting criterion, default is 'gini'
+                 'gini': splitting by gini index of attribute
+                 'info gain': splitting by information gain of attribute
+                 'mis error': splitting by misclassification error
+      prepruning: bool value, decide whether use pre-pruning method or not
+      postpruning: bool value, decide whether use post-pruning method or not
+      missing: missing value, algorithm will see attribute hold this 
+               value as missing value
+      verbose: print out detail or not
+    """ 
+    self.n_estimators = n_estimators
+    self.prepruning = prepruning
+    self.postpruning = postpruning
+    self.missing = missing
+    self.criterion = criterion
+    self.n_classes = -1
+    self.verbose = verbose
+    
+
+  def fit(self, train_data, train_label):
+    """ Fit this tree with train data and train label 
+      Parameters:
+      ----------
+      train_data: training data, 2D array-like 
+      train_label: training label, 1D array-like, for classifier,
+                  class label must be value from 0 to n_classes-1 
+    """      
+    m = len(train_data)	# m: number of samples
+    self.n_classes = np.max(train_label) + 1
+    train_data_label = np.column_stack((train_data, train_label))
+    D = np.ones(m) / m	
+    self.__estimators = list()
+    self.__alphas = list() 
+    for i in range(self.n_estimators):
+      data = self.__sampling(train_data_label, D)
+      est = Tree(prepruning=self.prepruning,
+                 missing=self.missing,
+                 postpruning=self.postpruning, 
+                 criterion = self.criterion)
+      est.fit(data[:,:-1], data[:,-1])
+      self.__estimators.append(est)
+      y_pre = est.predict(data[:,:-1])
+      e = sum(D[y_pre!=data[:,-1]])
+      if e > 0.5: break     
+      alpha = np.log((1 - e)/float(e+1e-20)) / 2.0 
+      self.__alphas.append(alpha)
+      D = np.exp((1 - (y_pre==data[:,-1]) * 2) * alpha) * D
+      D /= sum(D)	
+      if self.verbose: print ('Done ', i+1)     
+
+
+  def predict(self, test_data):
+    """ Do test and return the class labels """
+    pred_matrix = list()
+    for est in self.__estimators:
+      pred_matrix.append(est.predict(test_data))
+    pred_matrix = np.array(pred_matrix).transpose()
+    cls_matrix = list()
+    for cls in range(self.n_classes):
+      cls_matrix.append(np.sum(self.__alphas*(pred_matrix==cls),axis=1))
+    cls_matrix = np.array(cls_matrix).transpose()
+    return np.argmax(cls_matrix, axis=1)
+ 
+
+  def __sampling(self, data, w):
+    """ Do sample on data based on weight vector w """
+    n_samples = len(data)
+    index = n_samples - sum(np.cumsum(w)[:,None] > 
+                            np.random.rand(n_samples))
+    return data[index,:]
+
 
 def calc_entropy(vector, w=None):
   """ Calcualte the entropy on giving vector
@@ -511,12 +591,11 @@ if __name__ == '__main__':
 #                         [0,0,0,1,1,1,0,1,0,0,0,0,0,0,0,1,0],
 #                        ]).transpose()
 #  train_label = np.array([1,1,1,1,1,0,0,0,0,0,1,1,1,0,0,0,0])
-#  t = Tree()                               
-#  train_data = rand_missing(train_data, missing=-1,fraction=0.1)
-#  t.fit(train_data, train_label, criterion='gini', prepruning=True)
+#  t = AdaBoost(postpruning=False, criterion='info gain',
+#            missing=None)
+#  t.fit(train_data, train_label)
 #  t.print_tree()                           
-#  print(evaluate(t, train_data, train_label, 'bootstrap',
-#                 criterion='info gain', missing=-1, verbose=True))
+#  print(evaluate(t, train_data, train_label, 'bootstrap', verbose=True))
    train_data_label = list()               
    with open('connect-4.data', 'rb') as f:
      r = csv.reader(f)
@@ -531,12 +610,13 @@ if __name__ == '__main__':
    train_data_label = train_data_label.astype(int)
    print (train_data_label)
    print (train_data_label.shape)
-   t = Tree(postpruning=True, criterion='info gain',
-             missing=None)
+#   t = Tree(postpruning=True, criterion='info gain',
+#             missing=None)
+   t = AdaBoost(criterion='info gain',verbose=True)
 #   t.fit(train_data_label[:,:-1], train_data_label[:,:-1], prepruning=True)
    train_data = train_data_label[:,:-1]
-   train_data = rand_missing(train_data, missing=-1, fraction=0.01)
-   print (train_data)
+#   train_data = rand_missing(train_data, missing=-1, fraction=0.01)
+#   print (train_data)
    train_label = train_data_label[:,-1]
    print(evaluate(t, train_data, train_label, 
               method='bootstrap', verbose=True))
