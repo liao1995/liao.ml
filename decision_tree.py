@@ -66,6 +66,10 @@ class Tree:
     train_data_label = np.column_stack((train_data, train_label))
     self.n_classes = np.max(train_label) + 1
     w = np.ones(train_data.shape[0])
+    self.__attrs = list()	# all values of all attributes
+    self.n_features = train_data.shape[1]
+    for i in range(self.n_features):
+      self.__attrs.append(get_value_counts(train_data[:,i]))
     self.__root = self.__build_tree(train_data_label, 
                   range(train_data.shape[1]), w = w)
     if self.postpruning: self.__post_pruning()
@@ -129,7 +133,7 @@ class Tree:
     elif self.criterion == 'gini' or self.criterion == 'mis error':
       max_criterions = min(criterions)	
     max_index = criterions.index(max_criterions)
-    max_r = r_lists[max_index]
+    if self.missing: max_r = r_lists[max_index]
     max_aid = attr_ids[max_index]
     if np.sum(data[:,max_aid]==data[0][max_aid]) == len(data[:,max_aid]):
       node.label = self.__get_max_class(data[:,-1])
@@ -139,28 +143,34 @@ class Tree:
       node.label = self.__get_max_class(data[:,-1])
       return node
     node.fid = max_aid		# split by this feature
-    #del attr_ids[max_ig_index]	# remove this attribute from attribute set
-    all_attrs = get_value_counts(data[:, max_aid])
+    #del attr_ids[max_index]	# remove this attribute from attribute set
+    all_attrs = self.__attrs[max_aid]
     node.nodes = list()
     for each_attr in all_attrs:	# select column max_ig_aid value is each_attr,
-      if self.missing != None:
-        if each_attr == self.missing: continue
-        new_data = list()
-        new_w = list()
-        for i in range(len(data)):
-          if data[i][max_aid] == each_attr:
-            new_data.append(data[i])
-            new_w.append(w[i])
-          elif data[i][max_aid] == self.missing:
-            new_data.append(data[i])
-            new_w.append(w[i]*float(max_r[each_attr]))
-        new_data = np.array(new_data)
-        new_w = np.array(new_w)
-        child = self.__build_tree(new_data, attr_ids, depth=depth+1,
-                                  feature=each_attr,w=new_w)
-      else:
-        child = self.__build_tree(data[data[:,max_aid]==each_attr,:],
-                 attr_ids, depth=depth+1, feature=each_attr)
+      if sum(data[:,max_aid]==each_attr) == 0:
+        child = Node()
+        child.label = self.__get_max_class(data[:,-1])
+        child.feature = each_attr
+        child.depth = depth + 1
+      else:			# build subtree recursively
+        if self.missing != None:
+          if each_attr == self.missing: continue
+          new_data = list()
+          new_w = list()
+          for i in range(len(data)):
+            if data[i][max_aid] == each_attr:
+              new_data.append(data[i])
+              new_w.append(w[i])
+            elif data[i][max_aid] == self.missing:
+              new_data.append(data[i])
+              new_w.append(w[i]*float(max_r[each_attr]))
+          new_data = np.array(new_data)
+          new_w = np.array(new_w)
+          child = self.__build_tree(new_data, attr_ids, depth=depth+1,
+                                    feature=each_attr,w=new_w)
+        else:
+          child = self.__build_tree(data[data[:,max_aid]==each_attr,:],
+                   attr_ids, depth=depth+1, feature=each_attr)
       child.parent = node
       node.nodes.append(child)
     return node
@@ -591,6 +601,9 @@ if __name__ == '__main__':
 #                         [0,0,0,1,1,1,0,1,0,0,0,0,0,0,0,1,0],
 #                        ]).transpose()
 #  train_label = np.array([1,1,1,1,1,0,0,0,0,0,1,1,1,0,0,0,0])
+#  t = Tree()
+#  t.fit(train_data, train_label)
+#  t.print_tree()
 #  t = AdaBoost(postpruning=False, criterion='info gain',
 #            missing=None)
 #  t.fit(train_data, train_label)
@@ -612,14 +625,12 @@ if __name__ == '__main__':
    print (train_data_label.shape)
 #   t = Tree(postpruning=True, criterion='info gain',
 #             missing=None)
-   t = AdaBoost(criterion='info gain',verbose=True)
-#   t.fit(train_data_label[:,:-1], train_data_label[:,:-1], prepruning=True)
+   t = AdaBoost(criterion='info gain',verbose=False)
+#   t.fit(train_data_label[:,:-1], train_data_label[:,:-1])
+#   t.print_tree()
    train_data = train_data_label[:,:-1]
 #   train_data = rand_missing(train_data, missing=-1, fraction=0.01)
 #   print (train_data)
    train_label = train_data_label[:,-1]
    print(evaluate(t, train_data, train_label, 
-              method='bootstrap', verbose=True))
-#  train_data = np.array([[1,2,3,4,5,6,7,8,9],[1,1,1,0,0,0,0,1,0],[1,1,0,0,1,1,0,0,1]]).transpose()
-#  train_label = np.array([1,1,0,1,0,0,0,1,0])
-#  print (calc_info_gain(train_data[:,2],train_label))
+              method='hold-out', verbose=True, times=10))
