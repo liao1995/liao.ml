@@ -47,7 +47,7 @@ class KMeansCluster:
     self.n_samples = train_data.shape[0]
     # select k initial centroids randomly
     if self.centroids == None:
-      self.centroids = train_data[np.random.randint(self.n_samples,size=self.k),:]
+      self.centroids = self.__sampling(train_data, self.k)
     if self.verbose: print ('Initial centroids: ', self.centroids)
     # giving all labels of training data based on distance with centroids
     self.labels = np.zeros(self.n_samples)
@@ -61,7 +61,11 @@ class KMeansCluster:
         if self.verbose:       
           print ('[{0}] centroid: {1}  number: {2}'.format((r+1),
                self.centroids[i], np.sum(self.labels==i)))
-        self.centroids[i] = np.mean(train_data[self.labels==i,:], axis=0) 
+        try:
+          self.centroids[i] = np.mean(train_data[self.labels==i,:], axis=0) 
+        except RuntimeWarning:
+          print (train_data[i], self.centroids)
+          exit()
       # terminal condition
       if np.sum(eculidean_dis(old_centroids, self.centroids)) < self.threshold:
         break 
@@ -80,8 +84,17 @@ class KMeansCluster:
     return sse
 
   
+  def __sampling(self, data, n):
+    """ Random sampling NON-REPEAT n data from original data """ 
+    s =  set()
+    n_samples = data.shape[0]
+    while len(s) < n:
+      s = set(np.random.randint(n_samples, size=n-len(s)).tolist())
+    return data[list(s),:] 
+   
+ 
   def print_detail(self):
-    print ('clusters:', self.clusters)
+    print ('clusters:', self.centroids)
 
 
 class BisectingKMeansCluster:
@@ -167,18 +180,22 @@ def eculidean_dis(m1, m2):
   """ Calculate Eculidean distance between m1 and m2 """
   return np.sqrt(np.sum((m1-m2) ** 2, axis=1))
 
-
+import datetime
 if __name__ == '__main__':
-  with open('3D_spatial_network.txt', 'rb') as f:
+  filename = 'Relation_Network_(Directed).data'
+  #filename = '3D_spatial_network.txt'
+  #filename = 'eb.arff'
+  with open(filename, 'rb') as f:
     reader = csv.reader(f)
     data = list()
     for row in reader:
-      data.append(row[1:])	# skip the id
+      data.append(row[7:])	# skip the id
     data = np.array(data).astype(np.float32)
-#  for k in range(2,100):
-#    model = KMeansCluster(verbose=0, k=k)
-#    model.fit(data)
-#    print(model.calc_sse())
-    model = BisectingKMeansCluster(verbose=1,k=5)
-    model.fit(data)
-    print (model.calc_sse())
+  starttime = datetime.datetime.now()
+  model = BisectingKMeansCluster(verbose=1, k=4, threshold=1e-3)
+  #model = KMeansCluster(k=4,threshold=1e-3)
+  model.fit(data)
+  print(model.calc_sse())
+  endtime = datetime.datetime.now()
+  print ('Escape time:' )
+  print ((endtime-starttime))
