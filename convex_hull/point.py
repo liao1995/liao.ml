@@ -21,13 +21,18 @@ class Point(object):
     def getY(self):
         return self.Y
 
+    def dot2d(self, p):
+        ''' 2-D dot product '''
+        return self.X * p.X + self.Y * p.Y
+
     def cross2d(self, p):
         ''' 2-D cross product '''
-        res = self.X * p.Y - self.Y * p.X
-        if res > 0: return 1
-        if res == 0: return 0
-        return -1
+        return self.X * p.Y - self.Y * p.X
 
+    def norm2(self):
+        ''' 2-norm '''
+        return math.sqrt(self.X**2 + self.Y**2)
+        
     def dis(self, p):
         ''' Return the Eculidean distance between this and p'''
         return math.sqrt((self.X - p.X)**2 + (self.Y - p.Y)**2)

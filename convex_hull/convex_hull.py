@@ -2,9 +2,16 @@ from generator import Generator
 from collections import OrderedDict
 from point import Point
 from datetime import datetime
+import time
 import matplotlib.pyplot as plt
 import numpy as np
+import utils
 import sys
+
+class Pair(object):
+    def __init__(self, a, b):
+        self.a = a
+        self.b = b
 
 class ConvexHull(object):
     ''' Algorithms for solving convex hull problems '''
@@ -63,38 +70,151 @@ class ConvexHull(object):
         return self.latest
 
     def __graham_scan(self):
-        self.latest = np.array(self.points)
-        num_points = len(self.latest)
-        if num_points <= 3: return None
+        ''' Graham scan algorithms, argument sort determine whether need to sort or not'''
+        self.latest = self.__do_graham_scan(np.array(self.points))
+        
+    def __do_graham_scan(self, points, sort=True):
+        ''' Graham scan algorithms, argument sort determine whether need to sort or not'''
+        num_points = len(points)
+        if num_points <= 3:
+            if num_points < 3: return np.array(points)
+            for i in range(1, num_points):
+                if points[i].Y < points[0].Y:
+                    tmp = points[i]
+                    points[i] = points[0]
+                    points[0] = tmp
+            if points[2].lie_line([points[0], points[1]]) > 0:
+                return np.array(points)
+            else: return np.array([points[0],points[2],points[1]])
         # Find the least y coordinate
         for i in range(num_points):
-            if self.latest[i].Y < self.latest[0].Y:
-                tmp = self.latest[i]
-                self.latest[i] = self.latest[0]
-                self.latest[0] = tmp
-        P0 = self.latest[0]
-        # Sorted by polar angle
-        self.latest = sorted(self.latest[1:],key=lambda p:((p.X-P0.X)/p.dis(P0),-abs(p.X-P0.X)),reverse=True)
-        # Remove the same polar angle, near P0 points
-#        d = OrderedDict()
-#        for p in self.latest:
-#            d[(p.X-P0.X)/p.dis(P0)] = p
-#        cur = 0
-#        for key in d:
-#            self.latest[cur] = d[key]
-#            cur += 1
+            if points[i].Y < points[0].Y:
+                tmp = points[i]
+                points[i] = points[0]
+                points[0] = tmp
+        P0 = points[0]
+        if sort:
+            # Sorted by polar angle
+            points = sorted(points[1:],key=lambda p:((p.X-P0.X)/p.dis(P0),-abs(p.X-P0.X)),reverse=True)
+            # Remove the same polar angle, near P0 points
+            d = OrderedDict()
+            for p in points:
+                d[(p.X-P0.X)/p.dis(P0)] = p
+            cur = 0
+            for key in d:
+                points[cur] = d[key]
+                cur += 1
+        else:
+            points = points[1:]
         # Scan
-        num_points = len(self.latest)
+        num_points = len(points)
         stack = list()
         stack.append(P0)
-        stack.append(self.latest[0])
-        stack.append(self.latest[1])
+        stack.append(points[0])
+        stack.append(points[1])
         for i in range(2, num_points):
-            while P0.lie_line([self.latest[i], stack[-1]]) * \
-                stack[-2].lie_line([self.latest[i], stack[-1]]) < 0:
+            while P0.lie_line([points[i], stack[-1]]) * \
+                stack[-2].lie_line([points[i], stack[-1]]) < 0:
                 stack.pop()
-            stack.append(self.latest[i])
-        self.latest = np.array([P0] + stack)
+            stack.append(points[i])
+        return np.array(stack)
+
+    def __divide_conquer(self):
+        self.latest = self.__do_divide_conquer(np.array(self.points))
+        
+    def __do_divide_conquer(self, P):
+        if len(P) <= 3: return self.__do_graham_scan(P)
+        # divide
+        m = utils.median([p.X for p in P])
+        PL = [p for p in P if p.X <= m]
+        PR = [p for p in P if p.X > m]
+        QL = self.__do_divide_conquer(PL)
+        QR = self.__do_divide_conquer(PR)
+        # calculate polar angle
+        i = np.argmin([p.Y for p in QL])
+        j = np.argmin([p.Y for p in QR])
+        if QL[i].Y > QR[j].Y:
+            tmp = QL
+            QL = QR
+            QR = tmp
+            i = j
+        X = Point(QL[i].X + 1, QL[i].Y)
+        O = QL[i]
+        QL_pa = utils.calc_polar_angle(O, X, QL)
+        QR_pa = utils.calc_polar_angle(O, X, QR)
+        s = np.argmin(QR_pa)  # min polar angle in QR
+        t = np.argmax(QR_pa)  # max polar angle in QR
+        
+        # merge
+        QL = np.concatenate((QL[i:], QL[:i]))   # arrange in ascending polar angle order
+        QL_pa = np.concatenate((QL_pa[i:], QL_pa[:i]))
+        if s < t:
+            QR_1 = QR[s:t]
+            QR_2 = np.concatenate((QR[t:], QR[:s]))[::-1]
+            QR_pa_1 = QR_pa[s:t]
+            QR_pa_2 = np.concatenate((QR_pa[t:], QR_pa[:s]))[::-1]
+        else:
+            QR_1 = np.concatenate((QR[s:], QR[:t]))
+            QR_2 = QR[t:s][::-1]
+            QR_pa_1 = np.concatenate((QR_pa[s:], QR_pa[:t]))
+            QR_pa_2 = QR_pa[t:s][::-1]
+
+        l_len = len(QL)
+        r_len_1 = len(QR_1)
+        r_len_2 = len(QR_2)
+        l_it = 0
+        r_it_1 = 0
+        r_it_2 = 0
+        
+        W = list()
+        while True:
+            if l_it >= l_len:
+                if r_it_1 >= r_len_1: # extend r_2
+                    W.extend(QR_2[r_it_2:])
+                    r_it_2 = r_len_2
+                    break
+                elif r_it_2 >= r_len_2:   # extend r_1
+                    W.extend(QR_1[r_it_1:])
+                    r_it_1 = r_len_1
+                    break
+                else:   # append r_1 and r_2
+                    if QR_pa_1[r_it_1] < QR_pa_2[r_it_2]:
+                        W.append(QR_1[r_it_1])
+                        r_it_1 += 1
+                    else:
+                        W.append(QR_2[r_it_2])
+                        r_it_2 += 1
+            elif r_it_1 >= r_len_1:
+                if r_it_2 >= r_len_2:   # extend l
+                    W.extend(QL[l_it:])
+                    l_it = l_len
+                    break
+                else:   # append l and r_2
+                    if QL_pa[l_it] < QR_pa_2[r_it_2]:
+                        W.append(QL[l_it])
+                        l_it += 1
+                    else:
+                        W.append(QR_2[r_it_2])
+                        r_it_2 += 1
+            elif r_it_2 >= r_len_2:
+                if QL_pa[l_it] < QR_pa_1[r_it_1]:
+                    W.append(QL[l_it])
+                    l_it += 1
+                else:
+                    W.append(QR_1[r_it_1])
+                    r_it_1 += 1
+            else:   # append l, r_1 and r_2
+                if QL_pa[l_it] < QR_pa_1[r_it_1] and QL_pa[l_it] < QR_pa_2[r_it_2]:
+                    W.append(QL[l_it])
+                    l_it += 1
+                elif QR_pa_1[r_it_1] < QL_pa[l_it] and QR_pa_1[r_it_1] < QR_pa_2[r_it_2]:
+                    W.append(QR_1[r_it_1])
+                    r_it_1 += 1
+                else:
+                    W.append(QR_2[r_it_2])
+                    r_it_2 += 1
+        return self.__do_graham_scan(W, sort=False)
+        
 
     def start(self):
         start_time = datetime.now()
@@ -103,9 +223,9 @@ class ConvexHull(object):
         elif self.strategy == 'graham-scan':
             self.__graham_scan()
         elif self.strategy == 'divide-conqure':
-            pass
+            self.__divide_conquer()
         else:
-            sys.stderr.write('Invliad strategy\n')
+            sys.stderr.write('Invalid strategy\n')
             return None
         end_time = datetime.now()
         return end_time - start_time
