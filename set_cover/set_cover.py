@@ -1,6 +1,7 @@
 import sys
 from scipy.optimize import linprog
 import numpy as np
+import utils
 
 class SetCover(object):
     ''' For solving Set Cover problem '''
@@ -10,6 +11,7 @@ class SetCover(object):
             valid strategy value:
             'greedy': using greedy algorithm
             'rounding': rounding method using linear programming
+            'primal-dual': primal-dual schema 
             '''
         if len(X) <= 0 or len(F) <= 0:
             sys.stderr.write('Invalid X or F\n')
@@ -28,13 +30,15 @@ class SetCover(object):
             self.__greedy()
         elif self.strategy == 'rounding':
             self.__rounding()
+        elif self.strategy == 'primal-dual':
+            self.__primal_dual()
         else:
             sys.stderr.write('Invalid strategy\n')
             return None
         return self.C
 
     def __greedy(self):
-        U = self.X
+        U = self.X.copy()
         self.C = list()
         while len(U) > 0:
             max_cover = 0
@@ -78,5 +82,25 @@ class SetCover(object):
         # rounding
         threshold = 1 / f
         self.C = [self.F[i] for i in range(n) if res.x[i] > threshold]
+
+    def __primal_dual(self):
+        m = len(self.X) # number of points
+        n = len(self.F) # number of subsets
+        x = np.zeros(n, dtype=np.bool)
+        y = np.zeros(m)
+        c = [1 /len(f) for f in self.F]
+        U = set()
+        while len(U) < len(self.X):
+            e = utils.select(self.X-U)
+            f_i = [i for i in range(n) if e in self.F[i]]  # find all set contained e
+            min_delta = np.min([c[i]-np.sum([y[yi] for yi in self.F[i]])+y[e] for i in f_i])
+            y[e] += min_delta   # increase ye
+            for i in f_i:
+                if np.sum([y[yi] for yi in self.F[i]]) >= c[i]: # >= rather than == for precision
+                    x[i] = 1
+                    U = U.union(self.F[i])
+        self.C = [self.F[i] for i in range(n) if x[i] == 1]
+            
+            
             
          

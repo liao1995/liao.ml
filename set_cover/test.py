@@ -12,12 +12,12 @@ def test_generator():
 
 # test greedy algorithm for set cover
 def test_set_cover(strategy='rounding'):
-    X_F_n_l = [100, 1000, 5000, 10000, 50000]
+    #X_F_n_l = [100, 1000, 5000, 10000]
+    X_F_n_l = [10000]
     print ('strategy: ' + strategy)
-    #X_F_n_l = [100]
     for x in X_F_n_l:
         g = Generator(x, x)
-        sc = SetCover(g.X, g.F, strategy='greedy')
+        sc = SetCover(g.X, g.F, strategy=strategy)
         start = datetime.now()
         c = sc.start()
         end = datetime.now()
@@ -29,5 +29,6 @@ def test_set_cover(strategy='rounding'):
         print ('\tEscape time: ' + str(end - start))
         print ('\t===================================')
 
-test_set_cover(strategy='greedy')
+#test_set_cover(strategy='greedy')
 test_set_cover(strategy='rounding')
+#test_set_cover(strategy='primal-dual')
